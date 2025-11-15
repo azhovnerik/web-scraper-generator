@@ -216,9 +216,20 @@ class {class_name}:
     def find_html_files(self) -> List[Path]:
         """Знаходить всі HTML файли"""
         html_files = []
+        skip_names = {"index.html", "404.html", "error.html"}
+
         for file in self.site_dir.rglob("*.html"):
-            if file.name not in ["index.html", "404.html", "error.html"]:
-                html_files.append(file)
+            try:
+                relative_path = file.relative_to(self.site_dir)
+            except ValueError:
+                # Якщо файл не в межах site_dir, пропускаємо
+                continue
+
+            if len(relative_path.parts) == 1 and relative_path.name in skip_names:
+                continue
+
+            html_files.append(file)
+
         return html_files
     
     def read_file(self, filepath: Path) -> str:
