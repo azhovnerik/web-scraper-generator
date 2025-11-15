@@ -57,15 +57,21 @@ class SiteAnalyzer:
             return self._find_url_articles(max_pages)
 
     def _find_local_html_files(self, max_files: int) -> List[str]:
-        """Знаходить локальні HTML файли"""
-        html_files = []
+        """Знаходить локальні HTML файли, крім кореневого index.html"""
+        html_files: List[str] = []
+        root_index = (self.base_path / "index.html").resolve()
 
         for file in self.base_path.rglob("*.html"):
-            # Пропускаємо index.html
-            if file.name != "index.html":
-                html_files.append(str(file))
-                if len(html_files) >= max_files:
-                    break
+            try:
+                if file.resolve() == root_index:
+                    continue
+            except OSError:
+                # Якщо неможливо вирішити шлях (наприклад, биті лінки) — пропускаємо
+                continue
+
+            html_files.append(str(file))
+            if len(html_files) >= max_files:
+                break
 
         return html_files
 
