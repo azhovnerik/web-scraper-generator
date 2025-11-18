@@ -30,11 +30,6 @@ def main():
     parser.add_argument('--test-sites', action='store_true', help='Show list of test sites')
     parser.add_argument('--output', type=str, default='scrapers', help='Output directory')
     parser.add_argument('--max-retries', type=int, default=2, help='Maximum retries')
-    parser.add_argument(
-        '--local',
-        action='store_true',
-        help='Process local HTML directories instead of URLs'
-    )
 
     args = parser.parse_args()
 
@@ -49,12 +44,9 @@ def main():
     generator = ScraperGenerator(output_dir=args.output)
 
     if args.url:
-      if args.local:
-         print(f"\nGenerating scraper for LOCAL directory: {args.url}")
-      else:
-         print(f"\nGenerating scraper for: {args.url}")
+      print(f"\nGenerating scraper for: {args.url}")
 
-      result = generator.generate(args.url, max_retries=args.max_retries, is_local=args.local)
+      result = generator.generate(args.url, max_retries=args.max_retries)
 
       if result['success']:
          print(f"\n✓ Success! Scraper saved to: {result['filepath']}")
