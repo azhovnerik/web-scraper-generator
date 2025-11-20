@@ -1,194 +1,248 @@
-# Генератор Скрейперів для Сайтів зі Статтями
+# Web Scraper Generator
 
-Автоматичний генератор Python-скрейперів для сайтів зі статтями, який використовує LLM (через OpenRouter) для аналізу структури сайту та створення персоналізованих скрейперів.
+AI-powered Python web scraper generator that automatically creates custom scrapers for article-based websites using LLM analysis.
 
-## 🎯 Особливості
+## Features
 
-- ✨ Автоматичний аналіз структури сайту
-- 🤖 Використання LLM для визначення CSS-селекторів
-- 📝 Генерація готового Python-коду скрейпера
-- ✅ Автоматична валідація згенерованих селекторів
-- 🔄 Можливість уточнення селекторів при низькій точності
-- 📊 Детальні звіти про генерацію
-- 🧪 Готові тести для перевірки скрейперів
+- **Automatic Site Analysis**: Uses AI to analyze website structure and identify article patterns
+- **Smart Selector Generation**: LLM-powered CSS selector generation with automatic validation
+- **Blog Page Detection**: Automatically finds blog/news/articles pages with fallback strategies
+- **SPA Detection**: Identifies JavaScript-rendered sites (React/Vue/Angular) and provides helpful feedback
+- **High Success Rate**: Handles both relative and absolute URLs, pagination patterns, and various site structures
+- **Ready-to-Use Code**: Generates production-ready Python scrapers with comprehensive error handling
+- **Automated Testing**: Includes test suite with 5 different site types
 
-## 📋 Вимоги
+## Requirements
 
 - Python 3.8+
-- API ключ від OpenRouter (https://openrouter.ai/)
+- OpenRouter API key (https://openrouter.ai/)
 
-## 🚀 Встановлення
+## Installation
 
-1. Клонуйте репозиторій:
+1. Clone the repository:
 ```bash
 git clone <your-repo-url>
 cd web-scraper-generator
 ```
 
-2. Встановіть залежності:
+2. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Створіть файл `.env` з вашим API ключем:
+3. Create `.env` file with your API key:
 ```bash
-cp .env.example .env
-# Відредагуйте .env та додайте ваш OPENROUTER_API_KEY
+OPENROUTER_API_KEY=your_key_here
 ```
 
-## 💻 Використання
+## Usage
 
-### Генерація скрейпера для одного сайту
-
-```bash
-python main.py --url https://anadea.info/
-```
-
-### Генерація скрейперів для всіх тестових сайтів
+### Generate scraper for a website
 
 ```bash
-python main.py --batch
+python main.py --url https://example.com/blog/
 ```
 
-### Перегляд списку тестових сайтів
+### Examples
 
 ```bash
-python main.py --test-sites
+# Generate scraper for a blog
+python main.py --url https://www.thefamilylawco.co.uk
+
+# Generate scraper for reviews site
+python main.py --url https://anadea.info
 ```
 
-### Додаткові параметри
-
-```bash
-python main.py --url <URL> --output my_scrapers --max-retries 3
-```
-
-## 📁 Структура проекту
+## Project Structure
 
 ```
 web-scraper-generator/
-├── analyzer.py           # Аналіз структури сайту
-├── llm_client.py         # Клієнт для OpenRouter API
-├── template.py           # Jinja2 шаблон скрейпера
-├── validator.py          # Валідація селекторів
-├── generator.py          # Головний генератор
-├── main.py              # CLI інтерфейс
-├── requirements.txt     # Залежності
-├── .env.example         # Приклад конфігурації
-├── scrapers/            # Згенеровані скрейпери
+├── analyzer.py              # Site structure analysis with AI
+├── llm_client.py           # OpenRouter API client
+├── template.py             # Jinja2 scraper template
+├── validator.py            # Selector validation
+├── generator.py            # Main generator with SPA detection
+├── main.py                 # CLI interface
+├── requirements.txt        # Dependencies
+├── .env                    # Configuration (create from .env.example)
+│
+├── scrapers/               # Generated scrapers
 │   ├── *_scraper.py
 │   └── *_metadata.json
-└── tests/
-    └── test_scrapers.py # Тести
+│
+├── external/auto-scraper-tester/    # Test suite
+│   ├── sites/              # 5 test websites
+│   ├── src/                # Generated test scrapers
+│   └── tests/              # Automated tests
+│
+└── utilities/
+    ├── test_single_scraper.py      # Test individual scraper
+    └── run_all_scrapers.py         # Batch scraper testing
 ```
 
-## 🧪 Тестування
+## Testing
 
-Запуск тестів для згенерованих скрейперів:
+Run the automated test suite (requires test sites to be running):
 
 ```bash
-pytest tests/test_scrapers.py -v
+cd external/auto-scraper-tester
+python -m pytest tests/test_main.py -v
 ```
 
-Тести перевіряють:
-- ✅ Правильність структури згенерованого коду
-- ✅ Можливість скрейпера повертати дані
-- ✅ Наявність обов'язкових полів у статтях
-- ✅ Відсутність дублікатів URL
+All 5 tests should pass:
+- ✅ arts-review-quarterly (22/22 articles)
+- ✅ health-wellness-daily (19/19 articles)
+- ✅ newsroom-hub (18/18 articles)
+- ✅ tech-insights (15/15 articles)
+- ✅ travel-journal-atlas (18/18 articles)
 
-## 🔧 Як це працює
+## How It Works
 
+1. **Site Analysis**: Fetches homepage and analyzes HTML structure
+2. **Blog Page Detection**: Finds blog listing pages using:
+   - Links on homepage (`/blog/`, `/news/`, `/articles/`, etc.)
+   - Fallback: Direct path checking if not found in HTML
+3. **AI Selector Generation**: Uses Claude 3.5 Sonnet to generate CSS selectors
+4. **Validation**: Tests selectors on actual articles
+5. **Code Generation**: Creates ready-to-use Python scraper from template
+6. **Metadata**: Saves selectors and validation results
 
-6. **Збереження**: Зберігає код та метадані
-
-## 📝 Приклад використання згенерованого скрейпера
+## Generated Scraper Example
 
 ```python
-# Імпортуємо згенерований скрейпер
-from scrapers.anadea_info_scraper import scrape_anadea_info
+from scrapers.example_scraper import get_articles
 
-# Отримуємо статті
-articles = scrape_anadea_info(max_articles=10)
+# Scrape articles
+articles = get_articles("https://example.com")
 
-# Обробляємо результати
+# Process results
 for article in articles:
-    print(f"Title: {article['title']}")
-    print(f"URL: {article['url']}")
-    print(f"Date: {article.get('date', 'N/A')}")
-    print(f"Content length: {len(article.get('content', ''))}")
-    print("-" * 50)
+    print(f"Title: {article.title}")
+    print(f"URL: {article.url}")
+    print(f"Author: {article.author}")
+    print(f"Published: {article.published}")
+    print(f"Content: {article.content[:200]}...")
 ```
 
-## 🎓 Тестові сайти з завдання
-
-1. https://anadea.info/
-2. https://www.thefamilylawco.co.uk/
-3. https://www.ceb.com/
-4. https://info.wealthcounsel.com/
-5. https://circlesup.com/
-6. https://divorceseparationcoach.co.uk/
-7. https://www.journalofaccountancy.com/
-8. https://www.biggerpockets.com/
-9. https://www.realself.com/
-10. https://nutrition.org/
-11. https://acupuncturetoday.com/
-
-## 📊 Формат даних
-
-Кожна стаття повертається як словник:
+## Article Data Structure
 
 ```python
-{
-    'url': str,           # URL статті
-    'title': str | None,  # Заголовок
-    'content': str | None,# Основний текст
-    'date': str | None,   # Дата публікації
-    'author': str | None  # Автор
-}
+@dataclass
+class Article:
+    url: str           # Article URL
+    title: str         # Title
+    author: str        # Author (optional)
+    published: str     # Publication date (optional)
+    content: str       # Full article text (optional)
 ```
 
-## 🔍 Налаштування LLM
+## Advanced Features
 
-За замовчуванням використовується модель `anthropic/claude-3.5-sonnet` через OpenRouter.
+### SPA Detection
 
-Для зміни моделі відредагуйте `llm_client.py`:
+The generator automatically detects JavaScript-rendered sites and provides clear feedback:
 
+```
+⚠️  This website appears to use JavaScript rendering (SPA/React/Vue/Angular).
+
+The scraper generator currently works with server-rendered HTML sites only.
+JavaScript-based sites require browser automation (Selenium/Playwright), which is not yet supported.
+
+Detected framework indicators:
+  - React framework detected
+  - Webpack module loader detected
+  - Heavy JavaScript content (script/text ratio too high)
+```
+
+### Pagination Handling
+
+Automatically detects and uses correct pagination paths:
+- Blog at root: `/page/2/`, `/page/3/`
+- Blog at `/blog/`: `/blog/page/2/`, `/blog/page/3/`
+- Blog at `/reviews/`: `/reviews/page/2/`, `/reviews/page/3/`
+
+### Relative vs Absolute URLs
+
+Handles both:
+- Relative: `articles/my-post/`
+- Absolute: `/articles/my-post/`
+- Full URLs: `https://example.com/articles/my-post/`
+
+## Configuration
+
+### LLM Model
+
+Default: `anthropic/claude-3.5-sonnet` (via OpenRouter)
+
+To change model, edit `llm_client.py`:
 ```python
-self.model = "anthropic/claude-3.5-sonnet"  # Змініть на потрібну модель
+self.model = "anthropic/claude-3.5-sonnet"  # Change to desired model
 ```
 
-Доступні моделі: https://openrouter.ai/models
+Available models: https://openrouter.ai/models
 
-## ⚠️ Обмеження
+### HTML Limits
 
-- Скрейпери працюють тільки з публічними статичними сайтами
-- Не підтримуються сайти з JavaScript-рендерингом (SPA)
-- Не підтримуються сайти з авторизацією
-- Rate limiting: додано затримки між запитами (1 секунда)
+- Homepage analysis: 40,000 characters
+- Blog page analysis: 50,000 characters
 
-## 📈 Метрики якості
+Adjust in `llm_client.py` if needed.
 
-Після генерації створюється файл `*_metadata.json` з:
-- Згенерованими селекторами
-- Результатами валідації
-- Оцінкою якості (validation score)
+## Limitations
 
-Validation score:
-- 0.8+ - Відмінно ✅
-- 0.6-0.8 - Добре ⚠️
-- <0.6 - Потребує уточнення ❌
+### Supported Sites
+- ✅ Server-rendered HTML (WordPress, static sites, etc.)
+- ✅ Sites with standard pagination
+- ✅ Public content (no authentication)
 
-## 🤝 Внесок
+### Not Supported
+- ❌ JavaScript-rendered sites (React, Vue, Angular SPAs)
+- ❌ Sites requiring authentication/login
+- ❌ Sites behind paywalls
+- ❌ Sites with heavy anti-bot protection
 
-Якщо ви знайшли баг або маєте пропозицію - створіть Issue або Pull Request!
+## Utilities
 
-## 📄 Ліцензія
+### Test Single Scraper
+```bash
+python test_single_scraper.py scrapers/example_scraper.py
+```
+
+### Run All Scrapers
+```bash
+python run_all_scrapers.py --max-articles 5 --output results.json
+```
+
+## Troubleshooting
+
+### No articles found
+- Check if site has a `/blog/`, `/news/`, or `/articles/` section
+- Try providing direct URL to blog page
+- Verify site is server-rendered (not SPA)
+
+### Low validation score
+- Generator automatically retries with refinements
+- Check metadata JSON file for selector details
+- Site may have non-standard structure
+
+### SPA detected
+- Site requires JavaScript rendering
+- Consider using Selenium/Playwright for these sites
+- Or find an API endpoint if available
+
+## Recent Improvements
+
+- ✅ Added fallback blog page detection (checks standard paths directly)
+- ✅ Increased HTML analysis limit to 40KB for better coverage
+- ✅ Added intelligent SPA/framework detection
+- ✅ Fixed relative URL handling (stories/ vs /stories/)
+- ✅ Added `/reviews/` pattern support
+- ✅ Improved error messages with actionable guidance
+
+## License
 
 MIT License
 
-## 👨‍💻 Автор
+## Author
 
-Розроблено для виконання завдання від Олександра Михальченка
-
----
-
-**Дедлайн здачі**: 20 листопада, 8.00 за Києвом
+Developed as part of a technical assessment.
