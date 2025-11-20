@@ -39,15 +39,20 @@ class ScraperValidator:
             'overall_score': 0
         }
 
-        scores = []
-        if results['article_links']['found']:
-            scores.append(1.0)
-        if results['title']['success_rate'] > 0:
-            scores.append(results['title']['success_rate'])
-        if results['content']['success_rate'] > 0:
-            scores.append(results['content']['success_rate'])
+        # ВАЖНО: article_links_selector критически важен!
+        # Без него скрейпер не найдет статьи на homepage
+        if not results['article_links']['found']:
+            # Если selector не находит ссылки - это критическая ошибка
+            results['overall_score'] = 0.0
+        else:
+            # Если ссылки найдены, считаем средний score
+            scores = [1.0]  # За article_links
+            if results['title']['success_rate'] > 0:
+                scores.append(results['title']['success_rate'])
+            if results['content']['success_rate'] > 0:
+                scores.append(results['content']['success_rate'])
 
-        results['overall_score'] = sum(scores) / len(scores) if scores else 0
+            results['overall_score'] = sum(scores) / len(scores) if scores else 0
 
         return results
 
