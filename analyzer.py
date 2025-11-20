@@ -5,12 +5,13 @@ from urllib.parse import urljoin, urlparse
 import requests
 
 from llm_client import LLMClient
+from ai_agent import run_agent
 
 
 class SiteAnalyzer:
-    """Аналізує структуру сайту для знаходження статей використовуючи AI"""
+    """Аналізує структуру сайту для знаходження статей використовуючи AI Agent"""
 
-    def __init__(self, base_url: str):
+    def __init__(self, base_url: str, use_agent: bool = True):
         self.base_url = base_url.rstrip('/')
         self.domain = urlparse(base_url).netloc
         self.session = requests.Session()
@@ -18,6 +19,8 @@ class SiteAnalyzer:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
         self.llm_client = LLMClient()
+        self.use_agent = use_agent  # Flag to switch between agent and LLM approach
+        self._cached_article_urls = None  # Cache for article URLs to avoid duplicate agent runs
 
     def fetch_page(self, url: str, timeout: int = 10) -> str:
         """Завантажує HTML сторінки"""
@@ -29,61 +32,98 @@ class SiteAnalyzer:
             print(f"Error fetching {url}: {e}")
             return ""
 
-    def find_article_pages(self, max_pages: int = 5) -> List[str]:
-        """Використовує AI для знаходження посилань на конкретні статті"""
-        homepage_html = self.fetch_page(self.base_url)
-        if not homepage_html:
-            return []
+    def find_article_pages(self, max_pages: int = 5, max_iterations: int = 15) -> List[str]:
+        """Використовує AI Agent для знаходження посилань на конкретні статті"""
 
-        print(f"  Using AI to find article URLs on homepage...")
+        # Use cached results if available
+        if self._cached_article_urls is not None:
+            print(f"  Using cached article URLs ({len(self._cached_article_urls)} articles)")
+            return self._cached_article_urls[:max_pages] if max_pages else self._cached_article_urls
 
-        # Використовуємо LLM для пошуку статей на homepage
-        article_urls_relative = self.llm_client.find_article_urls(
-            site_url=self.base_url,
-            homepage_html=homepage_html,
-            max_articles=max_pages
-        )
+        if self.use_agent:
+            # Use AI Agent with Thought-Action-Observation cycle
+            print(f"  Using AI Agent to find article URLs...")
+            # Limit to 30 articles for selector generation (sufficient for patterns)
+            # This prevents long processing on sites with thousands of articles
+            article_urls = run_agent(
+                base_url=self.base_url,
+                max_iterations=max_iterations,
+                max_articles=30,  # Reasonable limit: enough for quality selectors, fast generation
+                verbose=True
+            )
 
-        # Завжди перевіряємо наявність окремої сторінки блогу
-        print(f"  Checking for dedicated blog page...")
-        blog_page_url = self._find_blog_page(homepage_html)
+            # Filter to same domain
+            filtered_urls = []
+            for url in article_urls:
+                parsed = urlparse(url)
+                if parsed.netloc == self.domain or parsed.netloc == '':
+                    filtered_urls.append(url)
 
-        if blog_page_url:
-            print(f"  Found blog page: {blog_page_url}")
-            blog_html = self.fetch_page(blog_page_url)
-            if blog_html:
-                print(f"  Blog page HTML length: {len(blog_html)} chars")
-                # Збільшуємо кількість статей для кращого аналізу
-                blog_article_urls = self.llm_client.find_article_urls(
-                    site_url=blog_page_url,
-                    homepage_html=blog_html,
-                    max_articles=30,  # Більше статей для кращого аналізу паттернів
-                    is_blog_page=True
-                )
+            print(f"  AI Agent found {len(filtered_urls)} article URLs")
 
-                # Додаємо blog articles до списку (пріоритет blog articles)
-                if len(blog_article_urls) > 0:
-                    print(f"  Found {len(blog_article_urls)} blog articles, using those")
-                    article_urls_relative = blog_article_urls
-                elif len(article_urls_relative) == 0:
-                    # Якщо не знайшли нічого ні на homepage, ні на blog
-                    article_urls_relative = []
+            # Cache the results
+            self._cached_article_urls = filtered_urls
 
-        # Конвертуємо відносні URL в абсолютні
-        article_urls = []
-        for url in article_urls_relative:
-            if url.startswith('http'):
-                full_url = url
-            else:
-                full_url = urljoin(self.base_url, url)
+            return filtered_urls[:max_pages] if max_pages else filtered_urls
 
-            # Перевіряємо що це той самий домен
-            if urlparse(full_url).netloc == self.domain or urlparse(full_url).netloc == '':
-                article_urls.append(full_url)
+        else:
+            # Legacy LLM approach (for fallback)
+            homepage_html = self.fetch_page(self.base_url)
+            if not homepage_html:
+                return []
 
-        print(f"  AI found {len(article_urls)} article URLs")
+            print(f"  Using AI to find article URLs on homepage...")
 
-        return article_urls[:max_pages]
+            # Використовуємо LLM для пошуку статей на homepage
+            article_urls_relative = self.llm_client.find_article_urls(
+                site_url=self.base_url,
+                homepage_html=homepage_html,
+                max_articles=max_pages
+            )
+
+            # Завжди перевіряємо наявність окремої сторінки блогу
+            print(f"  Checking for dedicated blog page...")
+            blog_page_url = self._find_blog_page(homepage_html)
+
+            if blog_page_url:
+                print(f"  Found blog page: {blog_page_url}")
+                blog_html = self.fetch_page(blog_page_url)
+                if blog_html:
+                    print(f"  Blog page HTML length: {len(blog_html)} chars")
+                    # Збільшуємо кількість статей для кращого аналізу
+                    blog_article_urls = self.llm_client.find_article_urls(
+                        site_url=blog_page_url,
+                        homepage_html=blog_html,
+                        max_articles=30,  # Більше статей для кращого аналізу паттернів
+                        is_blog_page=True
+                    )
+
+                    # Додаємо blog articles до списку (пріоритет blog articles)
+                    if len(blog_article_urls) > 0:
+                        print(f"  Found {len(blog_article_urls)} blog articles, using those")
+                        article_urls_relative = blog_article_urls
+                    elif len(article_urls_relative) == 0:
+                        # Якщо не знайшли нічого ні на homepage, ні на blog
+                        article_urls_relative = []
+
+            # Конвертуємо відносні URL в абсолютні
+            article_urls = []
+            for url in article_urls_relative:
+                if url.startswith('http'):
+                    full_url = url
+                else:
+                    full_url = urljoin(self.base_url, url)
+
+                # Перевіряємо що це той самий домен
+                if urlparse(full_url).netloc == self.domain or urlparse(full_url).netloc == '':
+                    article_urls.append(full_url)
+
+            print(f"  AI found {len(article_urls)} article URLs")
+
+            # Cache the results
+            self._cached_article_urls = article_urls
+
+            return article_urls[:max_pages]
 
     def _find_blog_page(self, homepage_html: str) -> str:
         """Знаходить посилання на сторінку блогу (листингову, не конкретну статтю)"""

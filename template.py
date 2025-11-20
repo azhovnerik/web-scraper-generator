@@ -76,7 +76,12 @@ class {{ class_name }}:
             if page_num == 1:
                 paginated_url = urljoin(self.base_url, '{{ blog_page_path }}')
             else:
-                paginated_url = urljoin(self.base_url, f'{{ blog_page_path }}page/{page_num}/')
+                # Handle root path case: if blog_page_path is '/', use '/page/X' instead of '//page/X'
+                {% if blog_page_path == '/' %}
+                paginated_url = urljoin(self.base_url, f'/page/{page_num}/')
+                {% else %}
+                paginated_url = urljoin(self.base_url, f'{{ blog_page_path }}/page/{page_num}/')
+                {% endif %}
 
             html = self.fetch_page(paginated_url)
             if html:
