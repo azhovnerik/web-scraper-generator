@@ -24,28 +24,24 @@ class ScraperGenerator:
         self.llm_client = LLMClient()
         self.validator = ScraperValidator()
 
-    def generate(self, site_url: str, max_retries: int = 2, is_local: bool = False) -> Dict:
+    def generate(self, site_url: str, max_retries: int = 2) -> Dict:
         """
         Генерує скрейпер для вказаного сайту
 
         Args:
-            site_url: URL сайту або шлях до локальної директорії
+            site_url: URL сайту
             max_retries: Максимальна кількість спроб уточнення
-            is_local: True якщо це локальна директорія з HTML файлами
 
         Returns:
             Словник з інформацією про згенерований скрейпер
         """
         print(f"\n{'='*60}")
-        if is_local:
-            print(f"Generating scraper for LOCAL site: {site_url}")
-        else:
-            print(f"Generating scraper for: {site_url}")
+        print(f"Generating scraper for: {site_url}")
         print(f"{'='*60}\n")
 
         # Крок 1: Аналіз сайту
         print("Step 1: Analyzing site structure...")
-        analyzer = SiteAnalyzer(site_url, is_local=is_local)
+        analyzer = SiteAnalyzer(site_url)
         analysis = analyzer.analyze()
 
         if not analysis['homepage_html']:
@@ -55,9 +51,30 @@ class ScraperGenerator:
             }
 
         if len(analysis['article_samples']) == 0:
+            # Проверяем, возможно ли это SPA (Single Page Application)
+            is_spa = self._detect_spa(analysis['homepage_html'])
+
+            if is_spa:
+                error_msg = (
+                    "⚠️  This website appears to use JavaScript rendering (SPA/React/Vue/Angular).\n\n"
+                    "The scraper generator currently works with server-rendered HTML sites only.\n"
+                    "JavaScript-based sites require browser automation (Selenium/Playwright), which is not yet supported.\n\n"
+                    "Detected framework indicators:\n" + "\n".join(f"  - {indicator}" for indicator in is_spa)
+                )
+            else:
+                error_msg = (
+                    "❌ No article/blog posts found on this website.\n\n"
+                    "Possible reasons:\n"
+                    "  - The site doesn't have a blog or articles section\n"
+                    "  - Articles are behind authentication/paywall\n"
+                    "  - The site structure is non-standard\n\n"
+                    "Try providing a direct URL to the blog page (e.g., https://example.com/blog/)"
+                )
+
+            print(f"\n{error_msg}\n")
             return {
                 'success': False,
-                'error': 'No article samples found'
+                'error': error_msg
             }
 
         print(f"Found {analysis['num_samples']} article samples")
@@ -65,23 +82,28 @@ class ScraperGenerator:
         # Крок 2: Генерація селекторів через LLM
         print("\nStep 2: Generating CSS selectors with LLM...")
 
-        # Для LLM використовуємо реальний URL або псевдо-URL для локальних файлів
-        llm_url = site_url if not is_local else f"file://{Path(site_url).absolute()}"
-
         selectors = self.llm_client.analyze_site_structure(
-            site_url=llm_url,
+            site_url=site_url,
             homepage_html=analysis['homepage_html'],
-            article_samples=analysis['article_samples']
+            article_samples=analysis['article_samples'],
+            article_urls=analysis.get('article_urls', [])  # Передаємо список URLs для кращого аналізу
         )
+
+        # Post-process selectors
+        selectors = self._postprocess_selectors(selectors, analysis)
 
         print(f"Generated selectors:")
         print(json.dumps(selectors, indent=2, ensure_ascii=False))
 
         # Крок 3: Валідація селекторів
         print("\nStep 3: Validating selectors...")
+
+        # Використовуємо blog_page_html для валідації article_links якщо доступно
+        validation_html = analysis.get('blog_page_html') or analysis['homepage_html']
+
         validation = self.validator.validate_selectors(
             selectors=selectors,
-            homepage_html=analysis['homepage_html'],
+            homepage_html=validation_html,
             article_samples=analysis['article_samples']
         )
 
@@ -93,14 +115,14 @@ class ScraperGenerator:
             print(f"\nStep 4: Refining selectors (attempt {retry_count + 1}/{max_retries})...")
 
             selectors = self.llm_client.refine_selectors(
-                site_url=llm_url,
+                site_url=site_url,
                 current_selectors=selectors,
                 validation_results=validation
             )
 
             validation = self.validator.validate_selectors(
                 selectors=selectors,
-                homepage_html=analysis['homepage_html'],
+                homepage_html=validation_html,
                 article_samples=analysis['article_samples']
             )
 
@@ -110,13 +132,20 @@ class ScraperGenerator:
         # Крок 5: Генерація коду
         print("\nStep 5: Generating scraper code...")
 
-        if is_local:
-            scraper_code = self._generate_local_scraper_code(site_url, selectors)
+        # Додаємо blog_page_path для правильної пагінації
+        blog_page_url = analysis.get('blog_page_url')
+        if blog_page_url:
+            from urllib.parse import urlparse
+            blog_page_path = urlparse(blog_page_url).path
+            selectors['blog_page_path'] = blog_page_path
         else:
-            scraper_code = generate_scraper_code(site_url, selectors)
+            # Якщо немає окремої blog page, pagination від homepage (корня)
+            selectors['blog_page_path'] = '/'
+
+        scraper_code = generate_scraper_code(site_url, selectors)
 
         # Крок 6: Збереження
-        filename = self._get_filename(site_url, is_local)
+        filename = self._get_filename(site_url)
         filepath = self.output_dir / filename
 
         with open(filepath, 'w', encoding='utf-8') as f:
@@ -127,7 +156,6 @@ class ScraperGenerator:
         # Збереження метаданих
         metadata = {
             'site_url': site_url,
-            'is_local': is_local,
             'selectors': selectors,
             'validation': validation,
             'filename': filename
@@ -153,198 +181,170 @@ class ScraperGenerator:
             'selectors': selectors
         }
 
-    def _get_filename(self, site_url: str, is_local: bool) -> str:
+    def _postprocess_selectors(self, selectors: Dict, analysis: Dict) -> Dict:
         """
-        Генерує ім'я файлу з URL або шляху
+        Post-processes selectors to fix common issues
 
         Args:
-            site_url: URL сайту або шлях до директорії
-            is_local: Чи це локальний сайт
+            selectors: Generated selectors
+            analysis: Site analysis data
+
+        Returns:
+            Processed selectors
+        """
+        import re
+        from bs4 import BeautifulSoup
+        from urllib.parse import urlparse
+
+        # Fix base_url_pattern - convert regex to simple path
+        base_url_pattern = selectors.get('base_url_pattern', '')
+
+        # Always analyze actual article URLs for the path pattern
+        article_samples = analysis.get('article_samples', [])
+        if article_samples:
+            first_url = article_samples[0].get('url', '')
+            path = urlparse(first_url).path
+            parts = [p for p in path.split('/') if p]
+            if parts:
+                selectors['article_path_pattern'] = f'/{parts[0]}/'
+            else:
+                selectors['article_path_pattern'] = '/blog/'
+        else:
+            # Fallback: try to extract from regex pattern
+            if base_url_pattern:
+                # Extract path from regex like ^/reviews/[\w-]+/$ or ^https?://localhost:8888/reviews/[\w-]+/?$
+                # Look for /word/ pattern after domain or at start
+                match = re.search(r'(?:^|8888)/([a-z-]+)/', base_url_pattern)
+                if match:
+                    article_path_pattern = f'/{match.group(1)}/'
+                    selectors['article_path_pattern'] = article_path_pattern
+                else:
+                    selectors['article_path_pattern'] = '/blog/'
+            else:
+                selectors['article_path_pattern'] = '/blog/'
+
+        # Fix selectors to work on article pages, not listing pages
+        # Check if title_selector and content_selector work on article pages
+        article_samples = analysis.get('article_samples', [])
+        if article_samples:
+            # Test current selectors on first article
+            sample_html = article_samples[0].get('html', '')
+            if sample_html:
+                soup = BeautifulSoup(sample_html, 'html.parser')
+
+                # Fix title selector if needed
+                title_elem = soup.select_one(selectors.get('title_selector', ''))
+                if not title_elem:
+                    # Try common article title selectors
+                    for selector in ['article h1', '.article-title', '.post-title', 'h1']:
+                        elem = soup.select_one(selector)
+                        if elem:
+                            selectors['title_selector'] = selector
+                            break
+
+                # Fix content selector if needed
+                content_elem = soup.select_one(selectors.get('content_selector', ''))
+                if not content_elem:
+                    # Try common article content selectors
+                    for selector in ['article .content', 'article .review-content', '.article-body', '.post-content', 'article']:
+                        elem = soup.select_one(selector)
+                        if elem:
+                            selectors['content_selector'] = selector
+                            break
+
+        return selectors
+
+    def _detect_spa(self, html: str) -> list:
+        """
+        Определяет признаки JavaScript-рендеринга (SPA frameworks)
+
+        Args:
+            html: HTML страницы
+
+        Returns:
+            Список обнаруженных индикаторов или пустой список, если это не SPA
+        """
+        indicators = []
+        html_lower = html.lower()
+
+        # React
+        if 'react' in html_lower or 'reactdom' in html_lower or '__react' in html_lower:
+            indicators.append("React framework detected")
+
+        # Vue.js
+        if 'vue.js' in html_lower or 'vue.min.js' in html_lower or 'v-if=' in html or 'v-for=' in html:
+            indicators.append("Vue.js framework detected")
+
+        # Angular
+        if 'angular' in html_lower or 'ng-app' in html_lower or 'ng-controller' in html_lower:
+            indicators.append("Angular framework detected")
+
+        # Next.js
+        if '__next' in html_lower or 'next/static' in html_lower or '_next/static' in html_lower:
+            indicators.append("Next.js framework detected")
+
+        # Nuxt.js
+        if '__nuxt' in html_lower or 'nuxt.js' in html_lower:
+            indicators.append("Nuxt.js framework detected")
+
+        # Generic SPA indicators
+        if '<div id="root"></div>' in html or '<div id="app"></div>' in html:
+            indicators.append("Empty root div (typical for SPAs)")
+
+        # Check for heavy JavaScript frameworks and loaders
+        if 'webpack' in html_lower or '__webpack' in html_lower:
+            indicators.append("Webpack module loader detected")
+
+        if 'newrelic' in html_lower or 'nr-data.net' in html_lower:
+            indicators.append("New Relic monitoring (common in SPAs)")
+
+        # Very small body with mostly scripts
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html, 'html.parser')
+        body = soup.find('body')
+        if body:
+            # Count text vs script content
+            scripts = body.find_all('script')
+            total_script_length = sum(len(str(script)) for script in scripts)
+            body_text = body.get_text(strip=True)
+
+            # If body is mostly scripts and very little meaningful text
+            if total_script_length > 5000 and len(body_text) < 500:
+                indicators.append("Minimal HTML content (body mostly contains scripts)")
+            # Or if scripts dominate even with more text
+            elif total_script_length > 15000 and total_script_length / max(1, len(body_text)) > 1.2:
+                indicators.append("Heavy JavaScript content (script/text ratio too high)")
+
+        return indicators
+
+    def _get_filename(self, site_url: str) -> str:
+        """
+        Генерує ім'я файлу з URL
+
+        Args:
+            site_url: URL сайту
 
         Returns:
             Ім'я файлу для скрейпера
         """
-        if is_local:
-            # Для локальних файлів використовуємо назву директорії
-            name = Path(site_url).name
-            name = name.replace('-', '_').replace(' ', '_')
-            return f"{name}_local_scraper.py"
+        domain = site_url.replace('https://', '').replace('http://', '').replace('www.', '')
+        domain = domain.split('/')[0]
+
+        # Обробка localhost - використовуємо "local_site" замість "localhost:port"
+        if domain.startswith('localhost'):
+            domain = 'local_site'
         else:
-            # Для URL використовуємо домен
-            domain = site_url.replace('https://', '').replace('http://', '').replace('www.', '')
-            domain = domain.split('/')[0].replace('.', '_').replace('-', '_')
-            return f"{domain}_scraper.py"
+            # Заміна недопустимих символів для звичайних доменів
+            domain = domain.replace('.', '_').replace('-', '_').replace(':', '_')
 
-    def _generate_local_scraper_code(self, site_dir: str, selectors: Dict) -> str:
-        """
-        Генерує код скрейпера для локальних файлів
+        return f"{domain}_scraper.py"
 
-        Args:
-            site_dir: Шлях до директорії з HTML файлами
-            selectors: CSS селектори
-
-        Returns:
-            Згенерований Python код
-        """
-        site_name = Path(site_dir).name
-        class_name = f"{site_name.replace('-', '_').replace(' ', '').title()}LocalScraper"
-        function_name = site_name.replace('-', '_').lower()
-
-        title_selector = selectors.get('title_selector', '')
-        content_selector = selectors.get('content_selector', '')
-        date_selector = selectors.get('date_selector', '')
-        author_selector = selectors.get('author_selector', '')
-
-        code = f'''"""
-Local scraper for {site_name}
-Generated automatically from local HTML files
-"""
-
-from pathlib import Path
-from bs4 import BeautifulSoup
-from typing import List, Dict, Optional
-
-
-class {class_name}:
-    """Scraper for local HTML files in {site_dir}"""
-    
-    def __init__(self, site_dir: str = "{site_dir}"):
-        self.site_dir = Path(site_dir)
-        if not self.site_dir.exists():
-            raise ValueError(f"Directory not found: {{site_dir}}")
-    
-    def find_html_files(self) -> List[Path]:
-        """Знаходить всі HTML файли"""
-        html_files = []
-        for file in self.site_dir.rglob("*.html"):
-            if file.name not in ["index.html", "404.html", "error.html"]:
-                html_files.append(file)
-        return html_files
-    
-    def read_file(self, filepath: Path) -> str:
-        """Читає HTML файл"""
-        try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                return f.read()
-        except Exception as e:
-            print(f"Error reading {{filepath}}: {{e}}")
-            return ""
-    
-    def scrape_article(self, filepath: Path) -> Optional[Dict]:
-        """Витягує дані з локального HTML файлу"""
-        html = self.read_file(filepath)
-        if not html:
-            return None
-        
-        soup = BeautifulSoup(html, 'html.parser')
-        
-        article = {{
-            'filepath': str(filepath),
-            'filename': filepath.name,
-            'relative_path': str(filepath.relative_to(self.site_dir)),
-            'title': None,
-            'content': None,
-            'date': None,
-            'author': None
-        }}
-        
-        # Витягуємо заголовок
-        {"title_elem = soup.select_one('" + title_selector + "')" if title_selector else "title_elem = None"}
-        if title_elem:
-            article['title'] = title_elem.get_text(strip=True)
-        
-        # Витягуємо контент
-        {"content_elem = soup.select_one('" + content_selector + "')" if content_selector else "content_elem = None"}
-        if content_elem:
-            paragraphs = content_elem.find_all(['p', 'div'])
-            if paragraphs:
-                article['content'] = '\\n\\n'.join([p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True)])
-            else:
-                article['content'] = content_elem.get_text(strip=True)
-        
-        # Витягуємо дату
-        {"date_elem = soup.select_one('" + date_selector + "')" if date_selector else "date_elem = None"}
-        if date_elem:
-            article['date'] = date_elem.get_text(strip=True)
-        
-        # Витягуємо автора
-        {"author_elem = soup.select_one('" + author_selector + "')" if author_selector else "author_elem = None"}
-        if author_elem:
-            article['author'] = author_elem.get_text(strip=True)
-        
-        return article if article['title'] or article['content'] else None
-    
-    def scrape(self, max_articles: int = None) -> List[Dict]:
-        """
-        Головна функція для скрейпінгу локальних статей
-        
-        Args:
-            max_articles: Максимальна кількість статей (None = всі)
-            
-        Returns:
-            Список словників з даними статей
-        """
-        print(f"Scraping local site: {{self.site_dir}}...")
-        
-        html_files = self.find_html_files()
-        print(f"Found {{len(html_files)}} HTML files")
-        
-        if max_articles:
-            html_files = html_files[:max_articles]
-        
-        articles = []
-        for i, filepath in enumerate(html_files, 1):
-            print(f"Scraping file {{i}}/{{len(html_files)}}: {{filepath.name}}")
-            article = self.scrape_article(filepath)
-            if article:
-                articles.append(article)
-        
-        print(f"Successfully scraped {{len(articles)}} articles")
-        return articles
-
-
-def scrape_{function_name}(site_dir: str = "{site_dir}", max_articles: int = None) -> List[Dict]:
-    """
-    Функція-обгортка для зручності використання
-    
-    Args:
-        site_dir: Шлях до директорії з HTML файлами
-        max_articles: Максимальна кількість статей
-        
-    Returns:
-        Список статей
-    """
-    scraper = {class_name}(site_dir)
-    return scraper.scrape(max_articles)
-
-
-if __name__ == "__main__":
-    articles = scrape_{function_name}(max_articles=5)
-    
-    print(f"\\n{{'='*50}}")
-    print(f"Scraped {{len(articles)}} articles:")
-    print(f"{{'='*50}}\\n")
-    
-    for i, article in enumerate(articles, 1):
-        print(f"Article {{i}}:")
-        print(f"  File: {{article['filename']}}")
-        print(f"  Path: {{article['relative_path']}}")
-        print(f"  Title: {{article['title']}}")
-        print(f"  Date: {{article.get('date', 'N/A')}}")
-        print(f"  Author: {{article.get('author', 'N/A')}}")
-        print(f"  Content length: {{len(article.get('content', '')) if article.get('content') else 0}} chars")
-        print()
-'''
-
-        return code
-
-    def generate_batch(self, site_urls: list, is_local: bool = False) -> Dict:
+    def generate_batch(self, site_urls: list) -> Dict:
         """
         Генерує скрейпери для списку сайтів
 
         Args:
-            site_urls: Список URL сайтів або шляхів до локальних директорій
-            is_local: True якщо це локальні директорії
+            site_urls: Список URL сайтів
 
         Returns:
             Словник з результатами для кожного сайту
@@ -354,7 +354,7 @@ if __name__ == "__main__":
         for i, url in enumerate(site_urls, 1):
             print(f"\nProcessing site {i}/{len(site_urls)}")
             try:
-                result = self.generate(url, is_local=is_local)
+                result = self.generate(url)
                 results[url] = result
             except Exception as e:
                 print(f"Error generating scraper for {url}: {e}")
@@ -386,6 +386,3 @@ if __name__ == "__main__":
 
     # Для URL
     # result = generator.generate("https://anadea.info/")
-
-    # Для локальних файлів
-    # result = generator.generate("sites/newsroom-hub", is_local=True)
