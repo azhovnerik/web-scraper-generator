@@ -86,7 +86,7 @@ def main():
 
     parser.print_help()
     print("\nExamples:")
-    print("  python main.py --url https://anadea.info/")
+    print("  ")
     print("  python main.py --batch")
     print("  python main.py --test-sites")
 
